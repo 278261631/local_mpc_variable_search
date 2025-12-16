@@ -15,6 +15,14 @@ import astropy.units as u
 
 from pympc.pympc import minor_planet_check
 
+# ============ Default Configuration ============
+DEFAULT_RA = "120.5"
+DEFAULT_DEC = "-12.3"
+DEFAULT_EPOCH = "now"
+DEFAULT_RADIUS_ARCSEC = 60.0
+DEFAULT_XEPHEM = ".cache/mpcorb_xephem.csv"
+# ===============================================
+
 
 def _parse_skycoord(ra: str, dec: str) -> SkyCoord:
     try:
@@ -32,7 +40,7 @@ def _parse_epoch(epoch: str) -> Time:
         return Time(epoch)
     except Exception as exc:
         raise SystemExit(
-            f"无法解析 epoch={epoch!r}，可用 'now' 或 'mjd:60200.5' 或 ISO 时间字符串。\n{exc}"
+            f"Cannot parse epoch={epoch!r}, use 'now' or 'mjd:60200.5' or ISO time string.\n{exc}"
         )
 
 
@@ -42,27 +50,27 @@ def _parse_observatory(value: str):
     if "," in value:
         parts = [p.strip() for p in value.split(",")]
         if len(parts) != 3:
-            raise SystemExit("--observatory 逗号形式需要 3 个数：lon_deg,rhocosphi,rhosinphi")
+            raise SystemExit("--observatory requires 3 values: lon_deg,rhocosphi,rhosinphi")
         return (float(parts[0]), float(parts[1]), float(parts[2]))
     return value
 
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--ra", required=True, help="RA：度数(如 120.5) 或时分秒(如 08:02:00)")
-    p.add_argument("--dec", required=True, help="Dec：度数(如 -12.3) 或度分秒(如 -12:18:00)")
-    p.add_argument("--epoch", default="now", help="观测历元：now / mjd:60200.5 / ISO 字符串")
-    p.add_argument("--radius-arcsec", type=float, default=60.0, help="搜索半径(角秒)")
-    p.add_argument("--xephem", required=True, help="本地 xephem CSV 路径（必填，先用 demo_mpc_prepare_xephem.py 生成）")
-    p.add_argument("--max-mag", type=float, default=None, help="返回结果的最大星等限制")
+    p.add_argument("--ra", default=DEFAULT_RA, help="RA: degrees (e.g. 120.5) or hms (e.g. 08:02:00)")
+    p.add_argument("--dec", default=DEFAULT_DEC, help="Dec: degrees (e.g. -12.3) or dms (e.g. -12:18:00)")
+    p.add_argument("--epoch", default=DEFAULT_EPOCH, help="Observation epoch: now / mjd:60200.5 / ISO string")
+    p.add_argument("--radius-arcsec", type=float, default=DEFAULT_RADIUS_ARCSEC, help="Search radius (arcsec)")
+    p.add_argument("--xephem", default=DEFAULT_XEPHEM, help="Local xephem CSV path (generate with demo_mpc_prepare_xephem.py)")
+    p.add_argument("--max-mag", type=float, default=None, help="Maximum magnitude limit for results")
     p.add_argument(
         "--observatory",
         default=None,
-        help="台站：MPC 代码(如 500) 或 lon_deg,rhocosphi,rhosinphi",
+        help="Observatory: MPC code (e.g. 500) or lon_deg,rhocosphi,rhosinphi",
     )
-    p.add_argument("--no-minor", action="store_true", help="不搜索小天体(小行星/彗星)")
-    p.add_argument("--no-major", action="store_true", help="不搜索大天体(行星/月)")
-    p.add_argument("--chunk-size", type=int, default=20000, help="并行分块大小；0=禁用多进程")
+    p.add_argument("--no-minor", action="store_true", help="Do not search minor bodies (asteroids/comets)")
+    p.add_argument("--no-major", action="store_true", help="Do not search major bodies (planets/moon)")
+    p.add_argument("--chunk-size", type=int, default=20000, help="Parallel chunk size; 0=disable multiprocessing")
     args = p.parse_args(argv)
 
     coo = _parse_skycoord(args.ra, args.dec)
@@ -70,11 +78,8 @@ def main(argv: list[str]) -> int:
     observatory = _parse_observatory(args.observatory)
 
     xephem_path = Path(args.xephem).expanduser() if args.xephem else None
-    if xephem_path and not xephem_path.exists():
-        raise SystemExit(f"找不到 --xephem 文件：{xephem_path}")
-
     if xephem_path is None or not xephem_path.exists():
-        raise SystemExit(f"找不到 --xephem 文件：{xephem_path}")
+        raise SystemExit(f"xephem file not found: {xephem_path}\nPlease run demo_mpc_prepare_xephem.py first to generate it.")
 
     results = minor_planet_check(
         ra=coo.ra.deg,
@@ -94,7 +99,7 @@ def main(argv: list[str]) -> int:
         f"target={coo.to_string('hmsdms', precision=2)}  epoch={epoch.isot}  r={args.radius_arcsec} arcsec"
     )
     if results is None or len(results) == 0:
-        print("没有匹配结果")
+        print("No matching results")
         return 0
 
     cols = [c for c in ("name", "ra", "dec", "mag", "separation") if c in results.colnames]
