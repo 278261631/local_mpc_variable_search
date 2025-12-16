@@ -1,7 +1,7 @@
-"""演示：本地查询 Gaia 变星表（圆锥检索）。
+"""Demo: Local cone search on Gaia variable star catalog.
 
-输入文件可以是 CSV / Parquet / FITS / VOTable（后两者由 astropy 读取）。
-文件至少要有两列：RA/Dec（默认列名 ra/dec，单位：度）。
+Input file can be CSV / Parquet / FITS / VOTable (latter two read by astropy).
+File must have at least two columns: RA/Dec (default column names ra/dec, unit: degrees).
 """
 
 from __future__ import annotations
@@ -15,6 +15,13 @@ import pandas as pd
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.table import Table
+
+# ============ Default Configuration ============
+DEFAULT_INPUT = "data/gaia_var.csv"
+DEFAULT_RA = "120.5"
+DEFAULT_DEC = "-12.3"
+DEFAULT_RADIUS_ARCSEC = 10.0
+# ===============================================
 
 
 def _parse_skycoord(ra: str, dec: str) -> SkyCoord:
@@ -72,14 +79,14 @@ def _read_all(path: Path) -> pd.DataFrame:
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--input", default="data/gaia_var.csv", help="本地 Gaia 变星表路径")
-    p.add_argument("--ra", required=True, help="目标 RA：度数或时分秒")
-    p.add_argument("--dec", required=True, help="目标 Dec：度数或度分秒")
-    p.add_argument("--radius-arcsec", type=float, default=10.0, help="搜索半径(角秒)")
-    p.add_argument("--ra-col", default="ra", help="输入表的 RA 列名(单位度)")
-    p.add_argument("--dec-col", default="dec", help="输入表的 Dec 列名(单位度)")
-    p.add_argument("--top", type=int, default=50, help="最多输出多少条")
-    p.add_argument("--create-demo", action="store_true", help="如果 input 不存在，生成一个演示 CSV")
+    p.add_argument("--input", default=DEFAULT_INPUT, help="Local Gaia variable star catalog path")
+    p.add_argument("--ra", default=DEFAULT_RA, help="Target RA: degrees or hms")
+    p.add_argument("--dec", default=DEFAULT_DEC, help="Target Dec: degrees or dms")
+    p.add_argument("--radius-arcsec", type=float, default=DEFAULT_RADIUS_ARCSEC, help="Search radius (arcsec)")
+    p.add_argument("--ra-col", default="ra", help="RA column name in input table (unit: degrees)")
+    p.add_argument("--dec-col", default="dec", help="Dec column name in input table (unit: degrees)")
+    p.add_argument("--top", type=int, default=50, help="Maximum number of results to output")
+    p.add_argument("--create-demo", action="store_true", help="Generate demo CSV if input does not exist")
     args = p.parse_args(argv)
 
     path = Path(args.input).expanduser()
@@ -87,13 +94,13 @@ def main(argv: list[str]) -> int:
     target = _parse_skycoord(args.ra, args.dec)
     if not path.exists():
         if not args.create_demo:
-            raise SystemExit(f"找不到输入文件：{path}（可加 --create-demo 生成示例）")
+            raise SystemExit(f"Input file not found: {path} (add --create-demo to generate sample)")
         _create_demo_csv(path, center=target)
 
     df = _read_all(path)
     if args.ra_col not in df.columns or args.dec_col not in df.columns:
         raise SystemExit(
-            f"输入表缺少列：{args.ra_col!r}/{args.dec_col!r}。" f"现有列：{list(df.columns)[:30]}"
+            f"Input table missing columns: {args.ra_col!r}/{args.dec_col!r}. Available: {list(df.columns)[:30]}"
         )
 
     coords = SkyCoord(
@@ -107,7 +114,7 @@ def main(argv: list[str]) -> int:
     print(f"input={path}")
     print(f"target={target.to_string('hmsdms', precision=2)}  r={args.radius_arcsec} arcsec")
     if df.empty:
-        print("没有匹配结果")
+        print("No matching results")
         return 0
 
     prefer = [
