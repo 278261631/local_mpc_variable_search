@@ -27,7 +27,7 @@ from flask import Flask, request, jsonify
 
 # ============ Default Configuration ============
 DEFAULT_PORT = 5000
-DEFAULT_CATALOG = "data/variable_stars_13.csv"
+DEFAULT_CATALOG = "data/variable_stars_15.csv"
 # ===============================================
 
 app = Flask(__name__)
