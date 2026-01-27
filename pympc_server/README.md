@@ -85,7 +85,26 @@ curl.exe -X POST "http://localhost:5001/update_catalog"
 --workers WORKERS     Number of worker threads (default: 4)
 --catalog-dir DIR     Directory for catalog files
 --update-catalog      Force update catalog from MPC at startup
+--update-only         Only update catalog, do not start server
 --threaded           Enable threaded request handling
+```
+
+## Update Catalog
+
+Update the asteroid catalog from Minor Planet Center:
+
+```bash
+# Command line (update only, no server)
+python pympc_server/pympc_asteroid_server.py --update-only
+
+# Or use the batch file
+update_catalog.bat
+
+# Update and start server
+python pympc_server/pympc_asteroid_server.py --update-catalog
+
+# Via HTTP API (when server is running)
+curl.exe -X POST "http://localhost:5001/update_catalog"
 ```
 
 ## Python Client Example

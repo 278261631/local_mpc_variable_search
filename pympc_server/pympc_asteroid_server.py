@@ -371,10 +371,36 @@ def main(argv: list[str]) -> int:
     p.add_argument("--workers", type=int, default=DEFAULT_MAX_WORKERS,
                    help="Number of worker threads")
     p.add_argument("--update-catalog", action="store_true",
-                   help="Force update catalog from MPC")
+                   help="Force update catalog from MPC and start server")
     p.add_argument("--threaded", action="store_true", default=True,
                    help="Enable threaded request handling")
+
+    # Subcommand for update only
+    p.add_argument("--update-only", action="store_true",
+                   help="Only update catalog from MPC, do not start server")
+
     args = p.parse_args(argv)
+
+    # Update only mode
+    if args.update_only:
+        print("Updating asteroid catalog from Minor Planet Center...")
+        try:
+            start = time.time()
+            if args.catalog_dir:
+                cat_path = pympc.update_catalogue(cat_dir=args.catalog_dir)
+            else:
+                cat_path = pympc.update_catalogue()
+            elapsed = time.time() - start
+            print(f"Catalog updated successfully!")
+            print(f"  Path: {cat_path}")
+            print(f"  Time: {elapsed:.1f}s")
+            if os.path.exists(cat_path):
+                size_mb = os.path.getsize(cat_path) / (1024 * 1024)
+                print(f"  Size: {size_mb:.1f}MB")
+            return 0
+        except Exception as e:
+            print(f"Error updating catalog: {e}")
+            return 1
 
     # Initialize executor
     init_executor(args.workers)
