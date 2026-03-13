@@ -4,7 +4,8 @@ REM Start ASTAP Variable Star Search Server
 echo Starting ASTAP Variable Star Search Server...
 echo.
 
-set CATALOG=data/variable_stars_13.csv
+set SCRIPT_DIR=%~dp0
+set CATALOG=%SCRIPT_DIR%data\variable_stars_15.csv
 set PORT=5000
 
 if not "%1"=="" set CATALOG=%1
@@ -14,5 +15,5 @@ echo Catalog: %CATALOG%
 echo Port: %PORT%
 echo.
 
-python astap_variable_search_server.py --catalog %CATALOG% --port %PORT%
+python "%SCRIPT_DIR%astap_variable_search_server.py" --catalog "%CATALOG%" --port %PORT%
 

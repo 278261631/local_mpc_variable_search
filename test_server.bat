@@ -36,3 +36,11 @@ echo.
 
 echo Test completed
 
+REM RA=100.596374, DEC=1.352195
+
+curl -s http://localhost:5000/search?ra=100.596374^&dec=1.352195^&radius=60
+
+REM 变星1: 名称=Gaia DR3 3125888880340416768, 类型=DSCT|GDOR|SXPHE, RA=100.592770, DEC=1.357650, 像素距离=10.2px
+curl -s http://localhost:5000/search?ra=100.592770^&dec=1.357650^&radius=60
+REM 变星2: 名称=NSVS 12517695, 类型=M, RA=100.596090, DEC=1.352420, 像素距离=1.4px
+curl -s http://localhost:5000/search?ra=100.596090^&dec=1.352420^&radius=60
