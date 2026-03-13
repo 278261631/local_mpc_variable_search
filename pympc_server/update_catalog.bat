@@ -5,5 +5,6 @@ echo Updating asteroid catalog from MPC...
 echo This may take several minutes...
 echo.
 
-python pympc_server/pympc_asteroid_server.py --update-only
+set SCRIPT_DIR=%~dp0
+python "%SCRIPT_DIR%pympc_asteroid_server.py" --update-only
 
