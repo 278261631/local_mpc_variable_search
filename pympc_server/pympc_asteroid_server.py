@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import tempfile
+import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Union
@@ -44,6 +45,7 @@ CATALOG_PATH = None
 LOAD_TIME = None
 EXECUTOR: ThreadPoolExecutor = None
 MAX_WORKERS = DEFAULT_MAX_WORKERS
+_PARABOLIC_SKIP_STATE = threading.local()
 
 
 def get_catalog_path() -> Optional[str]:
@@ -105,6 +107,48 @@ def init_executor(max_workers: int = DEFAULT_MAX_WORKERS):
     print(f"Thread pool initialized with {max_workers} workers")
 
 
+def _safe_cone_search_xephem_entries(
+    xephem_db,
+    coo,
+    date,
+    search_radius,
+    max_mag,
+    longitude,
+    rhocosphi,
+    rhosinphi,
+    buffer,
+):
+    """Skip only known nearly-parabolic failures during cone search."""
+    results = []
+    skipped = getattr(_PARABOLIC_SKIP_STATE, "count", 0)
+    for xephem_str in xephem_db:
+        try:
+            mp = pympc_impl.ephem.readdb(xephem_str)
+            mp.compute(date)
+            res = pympc_impl._cone_search(
+                xephem_str,
+                mp,
+                coo,
+                date,
+                search_radius,
+                max_mag,
+                longitude,
+                rhocosphi,
+                rhosinphi,
+                buffer,
+            )
+        except Exception as e:
+            emsg = str(e).lower()
+            if "nearly parabolic" in emsg or "parabolic" in emsg:
+                skipped += 1
+                continue
+            raise
+        if res is not None:
+            results.append(res)
+    _PARABOLIC_SKIP_STATE.count = skipped
+    return results
+
+
 def _do_search(ra: float, dec: float, epoch: float, radius: float,
                max_mag: Optional[float] = None, 
                observatory: Union[int, str, tuple] = 500,
@@ -128,50 +172,11 @@ def _do_search(ra: float, dec: float, epoch: float, radius: float,
 
     def run_search_skip_nearly_parabolic(_include_major: bool, _include_minor: bool):
         """Run search while skipping only known nearly-parabolic failures."""
-        skipped = 0
         original_fn = pympc_impl._cone_search_xephem_entries
 
-        def safe_cone_search_xephem_entries(
-            xephem_db,
-            coo,
-            date,
-            search_radius,
-            max_mag,
-            longitude,
-            rhocosphi,
-            rhosinphi,
-            buffer,
-        ):
-            nonlocal skipped
-            results = []
-            for xephem_str in xephem_db:
-                try:
-                    mp = pympc_impl.ephem.readdb(xephem_str)
-                    mp.compute(date)
-                    res = pympc_impl._cone_search(
-                        xephem_str,
-                        mp,
-                        coo,
-                        date,
-                        search_radius,
-                        max_mag,
-                        longitude,
-                        rhocosphi,
-                        rhosinphi,
-                        buffer,
-                    )
-                except Exception as e:
-                    emsg = str(e).lower()
-                    if "nearly parabolic" in emsg or "parabolic" in emsg:
-                        skipped += 1
-                        continue
-                    raise
-                if res is not None:
-                    results.append(res)
-            return results
-
         try:
-            pympc_impl._cone_search_xephem_entries = safe_cone_search_xephem_entries
+            _PARABOLIC_SKIP_STATE.count = 0
+            pympc_impl._cone_search_xephem_entries = _safe_cone_search_xephem_entries
             result = pympc.minor_planet_check(
                 ra=ra * u.deg,
                 dec=dec * u.deg,
@@ -184,6 +189,7 @@ def _do_search(ra: float, dec: float, epoch: float, radius: float,
                 observatory=observatory,
                 chunk_size=0,  # Avoid process workers so monkeypatch takes effect.
             )
+            skipped = getattr(_PARABOLIC_SKIP_STATE, "count", 0)
             return result, skipped
         finally:
             pympc_impl._cone_search_xephem_entries = original_fn

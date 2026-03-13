@@ -34,3 +34,9 @@ echo.
 curl.exe "http://localhost:5001/search?ra=333.76386876150417&dec=-14.206817474659415&epoch=61111.72467592593&radius=30.0&max_mag=20"
 
 curl.exe -s "http://localhost:5001/search?ra=93.77911570823565&dec=17.317754905956306&epoch=61111.71299768519&radius=36.0"
+
+
+
+curl.exe -s "http://localhost:5001/search?ra=84.99053848514775&dec=23.39787486566993&epoch=61111.71430555556&radius=36.0"
+
+curl.exe -s "http://localhost:5001/search?ra=84.01320594826623&dec=24.430126124764744&epoch=61111.71430555556&radius=36.0"
