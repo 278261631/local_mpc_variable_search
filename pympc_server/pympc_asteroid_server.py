@@ -29,6 +29,7 @@ from astropy.time import Time
 import astropy.units as u
 
 import pympc
+import pympc.pympc as pympc_impl
 
 # ============ Default Configuration ============
 DEFAULT_PORT = 5001
@@ -112,6 +113,81 @@ def _do_search(ra: float, dec: float, epoch: float, radius: float,
     """Perform a single asteroid search."""
     start = time.time()
     
+    def run_search(_include_major: bool, _include_minor: bool):
+        return pympc.minor_planet_check(
+            ra=ra * u.deg,
+            dec=dec * u.deg,
+            epoch=epoch_time,
+            search_radius=radius * u.arcsec,
+            xephem_filepath=CATALOG_PATH,
+            max_mag=max_mag,
+            include_minor_bodies=_include_minor,
+            include_major_bodies=_include_major,
+            observatory=observatory,
+        )
+
+    def run_search_skip_nearly_parabolic(_include_major: bool, _include_minor: bool):
+        """Run search while skipping only known nearly-parabolic failures."""
+        skipped = 0
+        original_fn = pympc_impl._cone_search_xephem_entries
+
+        def safe_cone_search_xephem_entries(
+            xephem_db,
+            coo,
+            date,
+            search_radius,
+            max_mag,
+            longitude,
+            rhocosphi,
+            rhosinphi,
+            buffer,
+        ):
+            nonlocal skipped
+            results = []
+            for xephem_str in xephem_db:
+                try:
+                    mp = pympc_impl.ephem.readdb(xephem_str)
+                    mp.compute(date)
+                    res = pympc_impl._cone_search(
+                        xephem_str,
+                        mp,
+                        coo,
+                        date,
+                        search_radius,
+                        max_mag,
+                        longitude,
+                        rhocosphi,
+                        rhosinphi,
+                        buffer,
+                    )
+                except Exception as e:
+                    emsg = str(e).lower()
+                    if "nearly parabolic" in emsg or "parabolic" in emsg:
+                        skipped += 1
+                        continue
+                    raise
+                if res is not None:
+                    results.append(res)
+            return results
+
+        try:
+            pympc_impl._cone_search_xephem_entries = safe_cone_search_xephem_entries
+            result = pympc.minor_planet_check(
+                ra=ra * u.deg,
+                dec=dec * u.deg,
+                epoch=epoch_time,
+                search_radius=radius * u.arcsec,
+                xephem_filepath=CATALOG_PATH,
+                max_mag=max_mag,
+                include_minor_bodies=_include_minor,
+                include_major_bodies=_include_major,
+                observatory=observatory,
+                chunk_size=0,  # Avoid process workers so monkeypatch takes effect.
+            )
+            return result, skipped
+        finally:
+            pympc_impl._cone_search_xephem_entries = original_fn
+
     try:
         # Convert epoch to astropy Time if it's MJD
         if isinstance(epoch, (int, float)):
@@ -119,18 +195,26 @@ def _do_search(ra: float, dec: float, epoch: float, radius: float,
         else:
             epoch_time = Time(epoch)
         
+        warning = None
+
         # Perform the search
-        result = pympc.minor_planet_check(
-            ra=ra * u.deg,
-            dec=dec * u.deg,
-            epoch=epoch_time,
-            search_radius=radius * u.arcsec,
-            xephem_filepath=CATALOG_PATH,
-            max_mag=max_mag,
-            include_minor_bodies=include_minor,
-            include_major_bodies=include_major,
-            observatory=observatory,
-        )
+        try:
+            result = run_search(include_major, include_minor)
+        except Exception as e:
+            # PyMPC/Skyfield may fail on some nearly-parabolic minor-body orbits.
+            # Degrade gracefully by retrying without minor bodies instead of failing
+            # the entire query.
+            if include_minor and "nearly parabolic" in str(e).lower():
+                result, skipped = run_search_skip_nearly_parabolic(
+                    include_major, include_minor
+                )
+                warning = (
+                    "Minor-body ephemeris contains nearly-parabolic orbits that "
+                    "cannot be computed accurately at this epoch; retried by "
+                    f"skipping {skipped} problematic entries."
+                )
+            else:
+                raise
         
         elapsed = time.time() - start
         
@@ -151,12 +235,16 @@ def _do_search(ra: float, dec: float, epoch: float, radius: float,
         else:
             records = []
         
-        return {
+        response = {
             "success": True,
             "count": len(records),
             "query_time_ms": elapsed * 1000,
             "results": records,
         }
+        if warning:
+            response["warning"] = warning
+            response["degraded"] = True
+        return response
     except Exception as e:
         return {
             "success": False,

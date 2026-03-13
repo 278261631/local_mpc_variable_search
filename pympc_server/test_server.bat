@@ -25,4 +25,12 @@ echo.
 echo 4. Search with magnitude limit:
 curl.exe -s "http://%HOST%:%PORT%/search?ra=120.5&dec=-12.3&epoch=60700&radius=600&max_mag=18"
 echo.
+echo.
 
+echo 5. Single search (MJD 61111.72467592593, radius 36 arcsec):
+curl.exe -s "http://%HOST%:%PORT%/search?ra=110.284428216144&dec=17.966352318820668&epoch=61111.72467592593&radius=36.0"
+echo.
+
+curl.exe "http://localhost:5001/search?ra=333.76386876150417&dec=-14.206817474659415&epoch=61111.72467592593&radius=30.0&max_mag=20"
+
+curl.exe -s "http://localhost:5001/search?ra=93.77911570823565&dec=17.317754905956306&epoch=61111.71299768519&radius=36.0"
