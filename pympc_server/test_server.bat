@@ -40,3 +40,7 @@ curl.exe -s "http://localhost:5001/search?ra=93.77911570823565&dec=17.3177549059
 curl.exe -s "http://localhost:5001/search?ra=84.99053848514775&dec=23.39787486566993&epoch=61111.71430555556&radius=36.0"
 
 curl.exe -s "http://localhost:5001/search?ra=84.01320594826623&dec=24.430126124764744&epoch=61111.71430555556&radius=36.0"
+
+
+
+curl.exe -s "http://localhost:5001/search?ra=109.37874208&dec=12.65189069&epoch=59970.0&radius=36.0"
