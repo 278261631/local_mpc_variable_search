@@ -46,8 +46,12 @@ pip install -r requirements.txt
 ```bash
 python pympc_fast_server.py --workers 8
 # or
-start_pympc_fast_server.bat
+start_pympc_fast_server.bat            # port 5001, 8 workers (foreground)
+start_pympc_fast_server_new_window.bat # same, but in its own console window
 ```
+
+`start_pympc_fast_server.bat` takes optional `PORT WORKERS` arguments, e.g.
+`start_pympc_fast_server_new_window.bat 5003 16`.
 
 The catalogue is looked up in the system temp dir (same file the stock server
 uses). Use `--catalog <path>` / `--catalog-dir <dir>` to override, and
