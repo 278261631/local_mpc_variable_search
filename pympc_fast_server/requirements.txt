@@ -1,0 +1,6 @@
+pympc
+flask
+astropy
+numpy
+scipy
+requests
