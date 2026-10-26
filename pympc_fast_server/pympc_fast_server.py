@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
 import sys
 import tempfile
 import threading
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, request, jsonify
@@ -32,6 +34,10 @@ from fast_engine import EphemerisEngine, DEFAULT_CATALOG_NAME
 DEFAULT_PORT = 5001
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_WORKERS = max(1, min(16, os.cpu_count() or 4))
+
+MIN_EPOCH_MJD = 1.0
+MAX_EPOCH_MJD = 100000.0
+MAX_RADIUS_ARCSEC = 3600.0 * 90.0
 
 app = Flask(__name__)
 
@@ -140,6 +146,22 @@ def info():
     })
 
 
+def _validate_coords(ra: float, dec: float, epoch: float, radius: float, max_mag=None):
+    if not math.isfinite(ra) or not (0.0 <= ra <= 360.0):
+        raise ValueError(f"ra must be a finite value in [0, 360] degrees, got {ra!r}")
+    if not math.isfinite(dec) or not (-90.0 <= dec <= 90.0):
+        raise ValueError(f"dec must be a finite value in [-90, 90] degrees, got {dec!r}")
+    if not math.isfinite(epoch) or not (MIN_EPOCH_MJD < epoch <= MAX_EPOCH_MJD):
+        raise ValueError(
+            f"epoch must be an MJD in ({MIN_EPOCH_MJD:g}, {MAX_EPOCH_MJD:g}], got {epoch!r} "
+            "(a value like 0.0 usually means a missing/invalid date)"
+        )
+    if not math.isfinite(radius) or not (0.0 < radius <= MAX_RADIUS_ARCSEC):
+        raise ValueError(f"radius must be in (0, {MAX_RADIUS_ARCSEC:g}] arcsec, got {radius!r}")
+    if max_mag is not None and not math.isfinite(max_mag):
+        raise ValueError(f"max_mag must be finite, got {max_mag!r}")
+
+
 def _parse_common(args, default_radius=60.0):
     ra = float(args.get("ra"))
     dec = float(args.get("dec"))
@@ -155,6 +177,7 @@ def _parse_common(args, default_radius=60.0):
         pass
     include_major = str(args.get("include_major", "true")).lower() == "true"
     include_minor = str(args.get("include_minor", "true")).lower() == "true"
+    _validate_coords(ra, dec, epoch, radius, max_mag)
     return ra, dec, epoch, radius, max_mag, observatory, include_major, include_minor
 
 
@@ -164,13 +187,17 @@ def search():
         return jsonify({"error": "engine not ready"}), 503
     try:
         ra, dec, epoch, radius, max_mag, observatory, inc_major, inc_minor = _parse_common(request.args)
-    except (TypeError, ValueError):
-        return jsonify({"error": "Missing or invalid ra/dec/epoch parameters"}), 400
+    except (TypeError, ValueError) as exc:
+        msg = str(exc) or "Missing or invalid ra/dec/epoch parameters"
+        return jsonify({"success": False, "error": msg}), 400
 
-    result = ENGINE.search(
-        ra=ra, dec=dec, epoch_mjd=epoch, radius_arcsec=radius, max_mag=max_mag,
-        observatory=observatory, include_major=inc_major, include_minor=inc_minor,
-    )
+    try:
+        result = ENGINE.search(
+            ra=ra, dec=dec, epoch_mjd=epoch, radius_arcsec=radius, max_mag=max_mag,
+            observatory=observatory, include_major=inc_major, include_minor=inc_minor,
+        )
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
     result["query"] = {
         "ra": ra, "dec": dec, "epoch": epoch, "radius_arcsec": radius,
         "max_mag": max_mag, "observatory": observatory,
@@ -204,13 +231,17 @@ def batch_search():
     def run(iq):
         i, q = iq
         try:
+            ra = float(q["ra"])
+            dec = float(q["dec"])
+            ep = float(q["epoch"])
+            _validate_coords(ra, dec, ep, float(radius), max_mag)
             return i, engine.search(
-                ra=float(q["ra"]), dec=float(q["dec"]), epoch_mjd=float(q["epoch"]),
-                radius_arcsec=radius, max_mag=max_mag, observatory=observatory,
+                ra=ra, dec=dec, epoch_mjd=ep,
+                radius_arcsec=float(radius), max_mag=max_mag, observatory=observatory,
                 include_major=include_major, include_minor=include_minor,
             )
         except (KeyError, TypeError, ValueError) as exc:
-            return i, {"error": f"Invalid query: {exc}"}
+            return i, {"success": False, "error": f"Invalid query: {exc}"}
 
     with ThreadPoolExecutor(max_workers=min(len(queries), DEFAULT_WORKERS)) as ex:
         for i, res in ex.map(run, list(enumerate(queries))):
@@ -286,6 +317,11 @@ def main(argv):
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    try:
+        from erfa import ErfaWarning
+        warnings.filterwarnings("ignore", category=ErfaWarning)
+    except Exception:
+        pass
 
     if args.update_only:
         import pympc

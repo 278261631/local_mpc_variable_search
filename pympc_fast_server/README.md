@@ -116,6 +116,12 @@ python benchmark.py --with-original
 
 ## Design notes / tuning
 
+* **Input validation**: `ra ∈ [0, 360]`, `dec ∈ [-90, 90]`, `epoch` (MJD) `∈ (1, 100000]`,
+  `radius > 0`. Invalid values (notably `epoch=0`, which usually means a missing
+  date in the client) return **HTTP 400** with a JSON `error` message instead of
+  crashing with a 500. `batch` marks each invalid query individually.
+* **ERFA noise**: astropy/erfa "dubious year" warnings are suppressed in the
+  server so the log stays clean.
 * **Window length** trades accuracy for rebuild frequency. 12 h covers a survey
   night; shorter windows improve extrapolation accuracy for fast movers.
 * **`--margin-arcsec`** guarantees completeness: candidates are selected within

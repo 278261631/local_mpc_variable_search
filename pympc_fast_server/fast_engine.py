@@ -56,6 +56,14 @@ def _mjd_from_decimalyear(dy: float) -> float:
 
     return float(Time(dy, format="decimalyear").mjd)
 
+
+def _safe_utc(mjd: float) -> str:
+    """Format MJD as UTC without exploding on pre-1970 / out-of-range dates."""
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.gmtime((float(mjd) - 40587.0) * 86400.0))
+    except (OSError, OverflowError, ValueError):
+        return "?"
+
 _cKDTree = None
 _scipy_checked = False
 
@@ -614,8 +622,7 @@ class EphemerisEngine:
             t0 = time.time()
             logger.info(
                 "[window] building     idx=%d center=%s (mjd %.4f, decimalyear %.6f) ...",
-                idx, time.strftime("%Y-%m-%d %H:%M", time.gmtime((center_mjd - 40587.0) * 86400.0)),
-                center_mjd, center,
+                idx, _safe_utc(center_mjd), center_mjd, center,
             )
             u0, v, a, bad = self.pool.base(self._req, center, self.deriv_eps)
             valid = np.isfinite(u0[:, 0]) & np.isfinite(v[:, 0]) & np.isfinite(a[:, 0])
@@ -660,7 +667,14 @@ class EphemerisEngine:
         return self._data[self._bounds[g]:self._bounds[g + 1]].strip()
 
     # ---- query -------------------------------------------------------------
-    def search(
+    def search(self, *args, **kwargs) -> dict:
+        try:
+            return self._search_impl(*args, **kwargs)
+        except Exception as exc:
+            logger.exception("[query] failed: %s", exc)
+            return {"success": False, "error": str(exc), "query_time_ms": 0.0}
+
+    def _search_impl(
         self,
         ra: float,
         dec: float,
