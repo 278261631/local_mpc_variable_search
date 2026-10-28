@@ -88,6 +88,8 @@ curl.exe -X POST "http://127.0.0.1:5001/warm?epoch=60000"
 --update-catalog       Re-download the MPC catalogue before starting
 --update-only          Download the catalogue and exit
 --log-level LEVEL      INFO (default), DEBUG, WARNING...
+--default-epoch VALUE  Fallback MJD (or `now`) when a request omits/sends an
+                       invalid epoch (e.g. `epoch=0.0`). Default: reject with 400.
 ```
 
 ## Logging & timing
@@ -95,12 +97,17 @@ curl.exe -X POST "http://127.0.0.1:5001/warm?epoch=60000"
 The server logs every ephemeris-window build and every query to the console:
 
 ```
+[request] GET /search from 127.0.0.1  query={ra=122.79&dec=71.82&epoch=0.0&radius=36} body={}
 [window] building     idx=1477911 center=2023-02-24 23:05 (mjd 59999.9624, decimalyear 2023.150582) ...
 [window] built in 1451 ms  idx=1477911 objects=1571421 skipped=0 cached=1/4
 [query] ra=88.79000 dec=7.41000 epoch=60000.00000 radius=300.0 max_mag=None -> 1 hit(s) in 1726.7 ms (candidates=9, window built +1451 ms build)
 [query] ra=0.00000 dec=0.00000 epoch=60000.00000 radius=300.0 max_mag=None -> 9 hit(s) in 12.9 ms (candidates=166, window cached)
 ```
 
+* **`[request]`** prints the *raw* incoming method, path, query string and JSON
+  body (POST bodies truncated at 4 kB) so you can verify exactly what a client
+  sent — before any parsing or validation. `/health` and `/info` are only logged
+  at `DEBUG`.
 * A **new window** costs ~1.5 s once; subsequent queries in the same window are ~10 ms
   (`window cached`).
 * `--log-level DEBUG` also logs window cache **hits** and LRU evictions.
@@ -119,7 +126,13 @@ python benchmark.py --with-original
 * **Input validation**: `ra ∈ [0, 360]`, `dec ∈ [-90, 90]`, `epoch` (MJD) `∈ (1, 100000]`,
   `radius > 0`. Invalid values (notably `epoch=0`, which usually means a missing
   date in the client) return **HTTP 400** with a JSON `error` message instead of
-  crashing with a 500. `batch` marks each invalid query individually.
+  crashing with a 500, and are logged as `[reject] ...`. `batch` marks each invalid
+  query individually.
+* **Missing-epoch fallback**: if a caller cannot be fixed and always sends
+  `epoch=0.0`, start the server with `--default-epoch now` (or a fixed MJD). Such
+  requests then succeed with a `warning` field. Note the result is only as
+  accurate as that epoch: sky motion is ~0.3°/day for a typical asteroid, so a
+  wrong default epoch gives wrong positions.
 * **ERFA noise**: astropy/erfa "dubious year" warnings are suppressed in the
   server so the log stays clean.
 * **Window length** trades accuracy for rebuild frequency. 12 h covers a survey

@@ -39,6 +39,9 @@ MIN_EPOCH_MJD = 1.0
 MAX_EPOCH_MJD = 100000.0
 MAX_RADIUS_ARCSEC = 3600.0 * 90.0
 
+# Optional fallback used when a client sends a missing / zero epoch. None = reject.
+DEFAULT_EPOCH = None
+
 app = Flask(__name__)
 
 ENGINE: EphemerisEngine = None
@@ -47,6 +50,28 @@ CATALOG_PATH: str = None
 CATALOG_VERSION: dict = {}
 ENGINE_PARAMS: dict = {}
 _rebuild_lock = threading.Lock()
+
+
+@app.before_request
+def _log_raw_request():
+    """Log the raw incoming request (query string / JSON body) for debugging."""
+    lg = logging.getLogger("pympc_fast")
+    if not lg.isEnabledFor(logging.INFO):
+        return
+    if request.path in ("/health", "/info"):
+        lg.debug("[request] %s %s from %s", request.method, request.path, request.remote_addr)
+        return
+    qs = request.query_string.decode("utf-8", "replace")
+    body = ""
+    if request.method in ("POST", "PUT", "PATCH"):
+        raw = request.get_data(cache=True)
+        body = raw.decode("utf-8", "replace")
+        if len(body) > 4000:
+            body = body[:4000] + f"...(truncated, {len(raw)} bytes)"
+    lg.info(
+        "[request] %s %s from %s  query={%s} body=%s",
+        request.method, request.path, request.remote_addr, qs, body or "{}",
+    )
 
 
 def catalog_version(path: str) -> dict:
@@ -146,6 +171,25 @@ def info():
     })
 
 
+def _resolve_epoch(raw):
+    """Return (epoch_mjd, used_default). Falls back to DEFAULT_EPOCH if configured."""
+    missing = raw is None or (isinstance(raw, str) and raw.strip() == "")
+    if missing:
+        if DEFAULT_EPOCH is not None:
+            return DEFAULT_EPOCH, True
+        raise ValueError("missing epoch (MJD)")
+    try:
+        ep = float(raw)
+    except (TypeError, ValueError):
+        if DEFAULT_EPOCH is not None:
+            return DEFAULT_EPOCH, True
+        raise ValueError(f"epoch must be an MJD number, got {raw!r}")
+    if not math.isfinite(ep) or ep <= 0.0:
+        if DEFAULT_EPOCH is not None:
+            return DEFAULT_EPOCH, True
+    return ep, False
+
+
 def _validate_coords(ra: float, dec: float, epoch: float, radius: float, max_mag=None):
     if not math.isfinite(ra) or not (0.0 <= ra <= 360.0):
         raise ValueError(f"ra must be a finite value in [0, 360] degrees, got {ra!r}")
@@ -165,7 +209,7 @@ def _validate_coords(ra: float, dec: float, epoch: float, radius: float, max_mag
 def _parse_common(args, default_radius=60.0):
     ra = float(args.get("ra"))
     dec = float(args.get("dec"))
-    epoch = float(args.get("epoch"))
+    epoch, used_default_epoch = _resolve_epoch(args.get("epoch"))
     radius = float(args.get("radius", default_radius))
     max_mag = args.get("max_mag")
     if max_mag is not None:
@@ -178,7 +222,8 @@ def _parse_common(args, default_radius=60.0):
     include_major = str(args.get("include_major", "true")).lower() == "true"
     include_minor = str(args.get("include_minor", "true")).lower() == "true"
     _validate_coords(ra, dec, epoch, radius, max_mag)
-    return ra, dec, epoch, radius, max_mag, observatory, include_major, include_minor
+    return (ra, dec, epoch, radius, max_mag, observatory,
+            include_major, include_minor, used_default_epoch)
 
 
 @app.route("/search")
@@ -186,9 +231,10 @@ def search():
     if ENGINE is None:
         return jsonify({"error": "engine not ready"}), 503
     try:
-        ra, dec, epoch, radius, max_mag, observatory, inc_major, inc_minor = _parse_common(request.args)
+        ra, dec, epoch, radius, max_mag, observatory, inc_major, inc_minor, used_default_epoch = _parse_common(request.args)
     except (TypeError, ValueError) as exc:
         msg = str(exc) or "Missing or invalid ra/dec/epoch parameters"
+        logging.getLogger("pympc_fast").warning("[reject] /search: %s", msg)
         return jsonify({"success": False, "error": msg}), 400
 
     try:
@@ -198,6 +244,13 @@ def search():
         )
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
+    if used_default_epoch:
+        result["warning"] = (
+            f"epoch missing or invalid; used default MJD {epoch:.5f}"
+        )
+        logging.getLogger("pympc_fast").warning(
+            "[fallback] /search: epoch missing/invalid, using default MJD %.5f", epoch
+        )
     result["query"] = {
         "ra": ra, "dec": dec, "epoch": epoch, "radius_arcsec": radius,
         "max_mag": max_mag, "observatory": observatory,
@@ -233,14 +286,18 @@ def batch_search():
         try:
             ra = float(q["ra"])
             dec = float(q["dec"])
-            ep = float(q["epoch"])
+            ep, used_default = _resolve_epoch(q.get("epoch"))
             _validate_coords(ra, dec, ep, float(radius), max_mag)
-            return i, engine.search(
+            res = engine.search(
                 ra=ra, dec=dec, epoch_mjd=ep,
                 radius_arcsec=float(radius), max_mag=max_mag, observatory=observatory,
                 include_major=include_major, include_minor=include_minor,
             )
+            if used_default:
+                res["warning"] = f"epoch missing or invalid; used default MJD {ep:.5f}"
+            return i, res
         except (KeyError, TypeError, ValueError) as exc:
+            logging.getLogger("pympc_fast").warning("[reject] /batch[%d]: %s", i, exc)
             return i, {"success": False, "error": f"Invalid query: {exc}"}
 
     with ThreadPoolExecutor(max_workers=min(len(queries), DEFAULT_WORKERS)) as ex:
@@ -310,6 +367,9 @@ def main(argv):
     p.add_argument("--update-only", action="store_true")
     p.add_argument("--log-level", default="INFO",
                    help="Logging level for window/query messages (default INFO)")
+    p.add_argument("--default-epoch", default=None,
+                   help="Fallback MJD (or 'now') used when a request omits an invalid epoch "
+                        "(e.g. epoch=0.0). Default: reject with HTTP 400.")
     args = p.parse_args(argv)
 
     logging.basicConfig(
@@ -322,6 +382,20 @@ def main(argv):
         warnings.filterwarnings("ignore", category=ErfaWarning)
     except Exception:
         pass
+
+    global DEFAULT_EPOCH
+    if args.default_epoch is not None:
+        val = str(args.default_epoch).strip().lower()
+        if val == "now":
+            from astropy.time import Time as _Time
+            DEFAULT_EPOCH = float(_Time.now().mjd)
+        else:
+            DEFAULT_EPOCH = float(args.default_epoch)
+        if not (MIN_EPOCH_MJD < DEFAULT_EPOCH <= MAX_EPOCH_MJD):
+            print(f"Invalid --default-epoch {DEFAULT_EPOCH}: must be MJD in "
+                  f"({MIN_EPOCH_MJD:g}, {MAX_EPOCH_MJD:g}]")
+            return 1
+        print(f"Missing/invalid epochs will fall back to MJD {DEFAULT_EPOCH:.5f}")
 
     if args.update_only:
         import pympc

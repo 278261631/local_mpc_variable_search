@@ -1,0 +1,9 @@
+flask
+numpy
+requests
+
+# optional: used by benchmark.py for the correctness cross-check
+astropy
+
+# optional: production WSGI server (--server waitress)
+# waitress
